@@ -59,6 +59,7 @@
     display:block; width:100%; height:auto; background:var(--board);
     border:4px solid #fff; border-radius:20px; box-shadow:0 6px 0 var(--shadow);
   }
+  #board{touch-action:none}
   .overlay{
     position:absolute; inset:4px; border-radius:16px; background:rgba(58,49,86,.82);
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
@@ -150,7 +151,7 @@
 <script type="module">
   // 전체 랭킹 (Firebase Firestore). 불러오지 못하면 게임은 이 폰에만 저장하는 방식으로 동작해요.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js";
-  import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp }
+  import { getFirestore, collection, doc, getDoc, setDoc, addDoc, getDocs, query, orderBy, limit, serverTimestamp }
     from "https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js";
 
   const app = initializeApp({
@@ -167,6 +168,13 @@
     async top() {
       const snap = await getDocs(query(collection(db, "scores"), orderBy("s", "desc"), limit(10)));
       return snap.docs.map(d => ({ id: d.id, n: String(d.data().n), s: Number(d.data().s) }));
+    },
+    // 기록마다 고유 ID를 문서 이름으로 써서, 같은 기록이 두 번 올라가지 않게 함
+    async put(id, n, s) {
+      const ref = doc(db, "scores", id);
+      if ((await getDoc(ref)).exists()) return "exists";
+      await setDoc(ref, { n, s, t: serverTimestamp() });
+      return "ok";
     },
     async add(n, s) {
       const ref = await addDoc(collection(db, "scores"), { n, s, t: serverTimestamp() });
@@ -348,6 +356,28 @@
   const withTimeout = (pr, ms = 6000) =>
     Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
+  const inFlight = new Set();
+  const newId = () => (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+  let syncing = false;
+
+  /* 서버에 못 올린 이 폰의 기록을 나중에 올림 (고유 ID라 중복 안 됨) */
+  async function syncLocal() {
+    if (syncing || !window.fbBoard) return;
+    syncing = true;
+    let n = 0;
+    try {
+      for (const e of scores.slice()) {
+        if (!e.u || e.up || inFlight.has(e.u)) continue;
+        inFlight.add(e.u);
+        try { await withTimeout(window.fbBoard.put(e.u, e.n, e.s)); e.up = true; n++; }
+        catch (err) { console.warn(err); break; }
+        finally { inFlight.delete(e.u); }
+      }
+    } finally { syncing = false; }
+    if (n) { saveScores(); await refreshGlobal(); if (showRank) renderOverlay(); }
+  }
+
   async function refreshGlobal() {
     if (!window.fbBoard) { globalScores = null; return false; }
     try { globalScores = await withTimeout(window.fbBoard.top()); return true; }
@@ -386,7 +416,7 @@
       else if (lastEntry) {
         const idx = list.findIndex(isMine);
         p += idx >= 0 ? `\n${idx + 1}등으로 등록했어요` : '\n등록했어요';
-        if (offline) p += '\n(서버에 못 올려서 이 폰에만 저장했어요)';
+        if (offline) p += '\n(서버에 못 올려서 이 폰에 저장했어요\n연결되면 자동으로 올릴게요)';
         fillList(); ovl.classList.remove('hide');
       }
       else if (list.length) p += `\n최고 기록 ${list[0].s.toLocaleString()}`;
@@ -427,6 +457,7 @@
     pending = false; lastEntry = null; lastId = null; offline = false; showRank = false; checking = true;
     renderOverlay();
     await refreshGlobal();
+    if (globalScores) syncLocal();
     if (id !== gameId || state !== 'over') return;
     checking = false;
     const l = curList();
@@ -439,7 +470,7 @@
     if (submitting) return;
     const id = gameId;
     const n = (ini.value.trim().toUpperCase() || '---').slice(0, 3);
-    const entry = { n, s: score };
+    const entry = { n, s: score, u: newId() };
     scores.push(entry);
     scores.sort((a, b) => b.s - a.s);
     scores = scores.slice(0, 10);
@@ -448,8 +479,14 @@
     renderOverlay();
     let uploaded = false;
     if (window.fbBoard) {
-      try { lastId = await withTimeout(window.fbBoard.add(n, entry.s)); uploaded = true; await refreshGlobal(); }
+      inFlight.add(entry.u);
+      try {
+        await withTimeout(window.fbBoard.put(entry.u, n, entry.s));
+        uploaded = true; entry.up = true; lastId = entry.u; saveScores();
+        await refreshGlobal();
+      }
       catch (err) { console.warn(err); }
+      finally { inFlight.delete(entry.u); }
     }
     if (!uploaded) { lastId = null; globalScores = null; }
     offline = !uploaded; submitting = false;
@@ -517,6 +554,18 @@
   });
   bd.addEventListener('pointercancel', () => { sx = null; });
 
+  /* 확대(줌) 방지: 핀치, 두 번 탭 */
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(ev =>
+    document.addEventListener(ev, e => e.preventDefault()));
+  document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
+  let lastTap = 0;
+  document.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastTap < 350 && !e.target.closest('button, input')) e.preventDefault();
+    lastTap = now;
+  }, { passive: false });
+  document.addEventListener('dblclick', e => e.preventDefault());
+
   /* loop */
   function frame(t) {
     requestAnimationFrame(frame);
@@ -549,6 +598,8 @@
 
   grid = newGrid(); nextT = pull(); drawNext(); draw();
   renderOverlay();
+  addEventListener('load', () => setTimeout(syncLocal, 1500));
+  addEventListener('online', syncLocal);
   requestAnimationFrame(frame);
 })();
 </script>
