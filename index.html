@@ -126,7 +126,8 @@
 
 <script>
 (() => {
-  const COLS = 10, ROWS = 20, S = 30;
+  let COLS = 10, ROWS = 20;
+  const S = 30;
   const SHAPES = {
     I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
     O: [[1,1],[1,1]],
@@ -292,9 +293,10 @@
   }
 
   function start() {
+    chooseDims();
     grid = newGrid(); score = 0; lines = 0; level = 1; acc = 0; bag = [];
     nextT = pull(); updateStats(); spawn();
-    state = 'play'; ov.classList.add('hide'); pauseBtn.textContent = '⏸'; draw();
+    state = 'play'; ov.classList.add('hide'); pauseBtn.textContent = '⏸'; fit(); draw();
   }
 
   function pause() {
@@ -371,9 +373,21 @@
   }
 
   const area = document.querySelector('.boardarea'), wrap = document.querySelector('.boardwrap');
+  /* 화면 비율에 맞춰 칸 수(가로 10~14, 세로 16~20)를 정해서 빈 공간 없이 채움 */
+  function chooseDims() {
+    const aw = area.clientWidth - 8, ah = area.clientHeight - 16;
+    let best = null;
+    for (let r = 16; r <= 20; r++) for (let c = 10; c <= 14; c++) {
+      const cell = Math.min(aw / c, ah / r), cov = c * r * cell * cell;
+      if (!best || cov > best.cov * 1.01 || (cov > best.cov * 0.99 && c * r > best.c * best.r)) best = { c, r, cov };
+    }
+    COLS = best.c; ROWS = best.r;
+    bd.width = COLS * S; bd.height = ROWS * S;
+  }
   function fit() {
+    if (state === 'ready') { chooseDims(); grid = newGrid(); cur = null; draw(); }
     const w = area.clientWidth, h = area.clientHeight - 8;
-    wrap.style.width = Math.max(120, Math.min(w, (h - 8) / 2 + 8)) + 'px';
+    wrap.style.width = Math.max(120, Math.min(w, (h - 8) * COLS / ROWS + 8)) + 'px';
   }
   new ResizeObserver(fit).observe(area); addEventListener('resize', fit); fit();
 
