@@ -33,12 +33,12 @@
   }
   header{display:flex; align-items:center; justify-content:space-between}
   h1{margin:0; font-size:clamp(20px, 5.5vw, 26px); font-weight:400; letter-spacing:.5px}
-  #pause{
+  .round{
     width:36px; height:36px; border-radius:50%; border:0; cursor:pointer;
     background:var(--yellow); color:#5b4630; font-size:15px; line-height:1;
     box-shadow:0 3px 0 #e6c15c; transition:transform .08s, box-shadow .08s;
   }
-  #pause:active{transform:translateY(3px); box-shadow:0 0 0 #e6c15c}
+  .round:active{transform:translateY(3px); box-shadow:0 0 0 #e6c15c}
   .info{display:flex; gap:8px; align-items:stretch}
   .stats{flex:1; display:grid; grid-template-columns:repeat(3,1fr); gap:6px}
   .stat{
@@ -64,7 +64,10 @@
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
     color:#fff; text-align:center; padding:16px;
   }
-  .overlay.hide{display:none}
+  .hide{display:none !important}
+  .btns{display:flex; gap:8px}
+  #rank{background:var(--mint); box-shadow:0 3px 0 #52b5ad}
+  #rank:active{box-shadow:0 0 0 #52b5ad}
   .overlay h2{margin:0; font-size:clamp(24px, 7vw, 32px); font-weight:400}
   .overlay p{margin:0; font-size:15px; opacity:.9; white-space:pre-line}
   .overlay button{
@@ -86,6 +89,18 @@
     .pad{display:none}
     .hint{display:block}
   }
+  .initform{display:flex; gap:8px; align-items:center}
+  .initform input{
+    width:7.5em; border:3px solid #fff; border-radius:999px; padding:8px 14px; text-align:center;
+    font:inherit; font-size:20px; background:rgba(255,255,255,.12); color:#fff; outline:none; text-transform:uppercase;
+  }
+  .initform input:focus{border-color:var(--yellow)}
+  .initform button{margin-top:0; padding:8px 18px; font-size:16px; background:var(--mint); color:#2f5753; box-shadow:0 3px 0 #52b5ad}
+  .rank{list-style:none; margin:0; padding:0; width:100%; max-height:52%; overflow-y:auto; display:flex; flex-direction:column; gap:3px}
+  .rank li{display:flex; align-items:center; gap:10px; padding:3px 12px; border-radius:12px; font-size:16px; text-align:left}
+  .rank li.me{background:rgba(255,224,138,.28)}
+  .rank li span:first-child{width:1.6em; opacity:.7}
+  .rank li span:nth-child(2){flex:1}
   button:focus-visible{outline:3px solid var(--ink); outline-offset:2px}
 </style>
 </head>
@@ -93,7 +108,10 @@
 <div class="app">
   <header>
     <h1>말랑 테트리스</h1>
-    <button id="pause" aria-label="일시정지">⏸</button>
+    <div class="btns">
+      <button id="rank" class="round" aria-label="랭킹 보기">🏆</button>
+      <button id="pause" class="round" aria-label="일시정지">⏸</button>
+    </div>
   </header>
 
   <div class="info">
@@ -110,6 +128,11 @@
     <div class="overlay" id="ov">
       <h2 id="ovt">말랑 테트리스</h2>
       <p id="ovp">블록을 쌓아 줄을 지워요</p>
+      <form id="ovf" class="initform hide">
+        <input id="ini" maxlength="3" placeholder="이니셜" autocomplete="off" autocapitalize="characters" enterkeyhint="done" aria-label="이니셜">
+        <button type="submit">등록</button>
+      </form>
+      <ol id="ovl" class="rank hide"></ol>
       <button id="ovb">시작하기</button>
     </div>
   </div></div>
@@ -145,8 +168,6 @@
   const ov = $('ov'), ovt = $('ovt'), ovp = $('ovp'), ovb = $('ovb'), pauseBtn = $('pause');
 
   let grid, cur, nextT, bag = [], score, lines, level, state = 'ready', acc = 0, last = 0;
-  let best = 0;
-  try { best = +localStorage.getItem('malang-tetris-best') || 0; } catch (e) {}
 
   const newGrid = () => Array.from({ length: ROWS }, () => Array(COLS).fill(null));
   const rotate = m => m[0].map((_, i) => m.map(r => r[i]).reverse());
@@ -287,14 +308,51 @@
   }
 
   /* ---------- flow ---------- */
-  function showOverlay(title, text, btn) {
-    ovt.textContent = title; ovp.textContent = text; ovb.textContent = btn;
-    ov.classList.remove('hide'); ovb.focus({ preventScroll: true });
+  const ovf = $('ovf'), ovl = $('ovl'), ini = $('ini');
+  let scores = [], showRank = false, pending = false, lastEntry = null, overAt = 0;
+  try { scores = JSON.parse(localStorage.getItem('malang-tetris-scores')) || []; } catch (e) {}
+  if (!Array.isArray(scores)) scores = [];
+  const saveScores = () => { try { localStorage.setItem('malang-tetris-scores', JSON.stringify(scores)); } catch (e) {} };
+  const qualifies = sc => sc > 0 && (scores.length < 10 || sc > scores[scores.length - 1].s);
+
+  function fillList() {
+    ovl.innerHTML = '';
+    scores.forEach((e, i) => {
+      const li = document.createElement('li');
+      if (e === lastEntry) li.className = 'me';
+      [String(i + 1), e.n, e.s.toLocaleString()].forEach(t => {
+        const sp = document.createElement('span'); sp.textContent = t; li.appendChild(sp);
+      });
+      ovl.appendChild(li);
+    });
+  }
+
+  function renderOverlay() {
+    ovf.classList.add('hide'); ovl.classList.add('hide');
+    let t, p = '', b;
+    if (showRank) {
+      t = '랭킹'; p = scores.length ? '' : '아직 기록이 없어요'; b = '닫기';
+      fillList(); ovl.classList.toggle('hide', !scores.length);
+    } else if (state === 'pause') {
+      t = '잠깐 멈춤'; p = '숨 한번 돌려요'; b = '계속하기';
+    } else if (state === 'over') {
+      t = '게임 끝!'; p = `점수 ${score}`; b = '다시 하기';
+      if (pending) { p += '\n이니셜을 남겨요 (3글자까지)'; ovf.classList.remove('hide'); }
+      else if (lastEntry) { p += `\n${scores.indexOf(lastEntry) + 1}등으로 등록했어요`; fillList(); ovl.classList.remove('hide'); }
+      else if (scores.length) p += `\n최고 기록 ${scores[0].s.toLocaleString()}`;
+    } else {
+      t = '말랑 테트리스'; p = '블록을 쌓아 줄을 지워요'; b = '시작하기';
+    }
+    ovt.textContent = t; ovp.textContent = p; ovp.hidden = !p; ovb.textContent = b;
+    ov.classList.remove('hide');
+    if (!showRank && state === 'over' && pending) ini.focus({ preventScroll: true });
+    else ovb.focus({ preventScroll: true });
   }
 
   function start() {
     chooseDims();
     grid = newGrid(); score = 0; lines = 0; level = 1; acc = 0; bag = [];
+    showRank = false; pending = false; lastEntry = null;
     nextT = pull(); updateStats(); spawn();
     state = 'play'; ov.classList.add('hide'); pauseBtn.textContent = '⏸'; fit(); draw();
   }
@@ -302,31 +360,58 @@
   function pause() {
     if (state !== 'play') return;
     state = 'pause'; pauseBtn.textContent = '▶'; pauseBtn.setAttribute('aria-label', '계속하기');
-    showOverlay('잠깐 멈춤', '숨 한번 돌려요', '계속하기');
+    renderOverlay();
   }
 
   function resume() {
     if (state !== 'pause') return;
+    showRank = false;
     state = 'play'; pauseBtn.textContent = '⏸'; pauseBtn.setAttribute('aria-label', '일시정지');
     ov.classList.add('hide'); last = performance.now();
   }
 
   function gameOver() {
-    state = 'over';
-    if (score > best) { best = score; try { localStorage.setItem('malang-tetris-best', best); } catch (e) {} }
-    showOverlay('게임 끝!', `점수 ${score}\n최고 기록 ${best}`, '다시 하기');
+    state = 'over'; overAt = performance.now();
+    pending = qualifies(score); lastEntry = null; showRank = false;
+    renderOverlay();
   }
 
-  ovb.addEventListener('click', () => { state === 'pause' ? resume() : start(); });
+  ovf.addEventListener('submit', e => {
+    e.preventDefault();
+    const n = (ini.value.trim().toUpperCase() || '---').slice(0, 3);
+    const entry = { n, s: score };
+    scores.push(entry);
+    scores.sort((a, b) => b.s - a.s);
+    scores = scores.slice(0, 10);
+    saveScores();
+    lastEntry = entry; pending = false; ini.value = '';
+    renderOverlay();
+  });
+
+  ovb.addEventListener('click', () => {
+    if (showRank) { showRank = false; renderOverlay(); }
+    else if (state === 'pause') resume();
+    else start();
+  });
   pauseBtn.addEventListener('click', () => { state === 'play' ? pause() : state === 'pause' ? resume() : null; });
+  $('rank').addEventListener('click', () => {
+    if (showRank) { showRank = false; if (state === 'play') resume(); else renderOverlay(); return; }
+    if (state === 'play') pause();
+    showRank = true; renderOverlay();
+  });
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
 
   /* keyboard */
   addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
     const k = e.key;
+    if (showRank) { if (k === 'Escape') { showRank = false; renderOverlay(); } return; }
     if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(k)) e.preventDefault();
     if (k === 'p' || k === 'P' || k === 'Escape') { state === 'play' ? pause() : resume(); return; }
-    if ((k === 'Enter' || k === ' ') && (state === 'ready' || state === 'over')) { start(); return; }
+    if ((k === 'Enter' || k === ' ') && (state === 'ready' || state === 'over')) {
+      if (e.repeat || (state === 'over' && (pending || performance.now() - overAt < 800))) return;
+      start(); return;
+    }
     if (k === 'ArrowLeft') act('left');
     else if (k === 'ArrowRight') act('right');
     else if (k === 'ArrowUp') act('rot');
@@ -392,7 +477,7 @@
   new ResizeObserver(fit).observe(area); addEventListener('resize', fit); fit();
 
   grid = newGrid(); nextT = pull(); drawNext(); draw();
-  showOverlay('말랑 테트리스', '블록을 쌓아 줄을 지워요', '시작하기');
+  renderOverlay();
   requestAnimationFrame(frame);
 })();
 </script>
