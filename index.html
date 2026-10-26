@@ -76,6 +76,19 @@
     font:inherit; font-size:18px; background:var(--pink); color:#5a2338; box-shadow:0 4px 0 #e57796;
   }
   .overlay button:active{transform:translateY(4px); box-shadow:0 0 0 #e57796}
+  .pop{position:absolute; inset:4px; border-radius:16px; pointer-events:none; overflow:hidden; display:none; z-index:2}
+  .pop.show{display:block}
+  .pop-heart{position:absolute; top:20%; left:50%; font-size:clamp(48px,16vw,72px); line-height:1; transform:translateX(-50%); animation:heartPop 1.9s ease-out both}
+  .pop-msg{
+    position:absolute; top:calc(20% + clamp(62px,20vw,92px)); left:50%; width:max-content; max-width:88%;
+    text-align:center; background:rgba(255,255,255,.95); color:#5a2a4a; padding:8px 16px; border-radius:999px;
+    font-size:clamp(16px,5vw,20px); box-shadow:0 4px 0 rgba(0,0,0,.18); animation:msgPop 2.1s ease-out both;
+  }
+  .pop-f{position:absolute; bottom:22%; font-size:20px; opacity:0; animation:floatUp 1.9s ease-out both}
+  @keyframes heartPop{0%{transform:translateX(-50%) scale(.2);opacity:0}20%{transform:translateX(-50%) scale(1.25);opacity:1}35%{transform:translateX(-50%) scale(1)}80%{opacity:1}100%{transform:translateX(-50%) translateY(-24px);opacity:0}}
+  @keyframes msgPop{0%{transform:translateX(-50%) translateY(10px) scale(.8);opacity:0}15%{transform:translateX(-50%) scale(1.06);opacity:1}25%{transform:translateX(-50%) scale(1)}85%{opacity:1}100%{transform:translateX(-50%) translateY(-10px);opacity:0}}
+  @keyframes floatUp{0%{transform:translateY(0) scale(.6);opacity:0}20%{opacity:1}100%{transform:translateY(-170px) scale(1.1);opacity:0}}
+  @media (prefers-reduced-motion: reduce){.pop-f{display:none}}
   .pad{display:flex; justify-content:space-between; gap:6px}
   .pad button{
     flex:1; aspect-ratio:1; max-width:76px; border:0; border-radius:50%; cursor:pointer;
@@ -126,6 +139,7 @@
 
   <div class="boardarea"><div class="boardwrap">
     <canvas id="board" width="300" height="600"></canvas>
+    <div class="pop" id="pop" aria-live="polite"></div>
     <div class="overlay" id="ov">
       <h2 id="ovt">말랑 테트리스</h2>
       <p id="ovp">블록을 쌓아 줄을 지워요</p>
@@ -197,6 +211,18 @@
   };
   const COLORS = { I:'#7fdbd4', O:'#ffe08a', T:'#c9a7f5', S:'#a8e6a1', Z:'#ff9db5', J:'#8fb8ff', L:'#ffb98a' };
 
+  /* 줄이 지워질 때 랜덤으로 나오는 문구 — 여기에 계속 추가하면 돼요 */
+  const LOVE = [
+    '문송이 사랑해~',
+    '문송이 화이팅!',
+    '나의 사랑 ❤️',
+    '오늘하루 수고많았어^^',
+    '최고의 와이프!',
+    '대체불가사랑',
+    '요리너무잘해!',
+    '항상 고마워요~!'
+  ];
+
   const $ = id => document.getElementById(id);
   const bc = $('board').getContext('2d');
   const nc = $('next').getContext('2d');
@@ -262,6 +288,7 @@
       score += [0, 100, 300, 500, 800][n] * level;
       lines += n;
       level = Math.floor(lines / 10) + 1;
+      showLove();
     }
     updateStats();
     acc = 0;
@@ -343,6 +370,27 @@
   }
 
   /* ---------- flow ---------- */
+  const pop = $('pop');
+  let lastLove = -1, popTimer;
+  function showLove() {
+    let i;
+    do { i = Math.floor(Math.random() * LOVE.length); } while (LOVE.length > 1 && i === lastLove);
+    lastLove = i;
+    pop.innerHTML = '';
+    const h = document.createElement('div'); h.className = 'pop-heart'; h.textContent = '💖';
+    const m = document.createElement('div'); m.className = 'pop-msg'; m.textContent = LOVE[i];
+    pop.append(h, m);
+    const hearts = ['💖', '💕', '💗', '❤️'];
+    for (let k = 0; k < 7; k++) {
+      const f = document.createElement('span'); f.className = 'pop-f'; f.textContent = hearts[k % 4];
+      f.style.left = (8 + Math.random() * 84) + '%';
+      f.style.animationDelay = (Math.random() * 0.4) + 's';
+      pop.appendChild(f);
+    }
+    pop.classList.remove('show'); void pop.offsetWidth; pop.classList.add('show');
+    clearTimeout(popTimer); popTimer = setTimeout(() => pop.classList.remove('show'), 2300);
+  }
+
   const ovf = $('ovf'), ovl = $('ovl'), ini = $('ini');
   let scores = [], showRank = false, pending = false, lastEntry = null, overAt = 0;
   let globalScores = null, lastId = null, checking = false, submitting = false, offline = false, loadingRank = false, gameId = 0;
@@ -397,6 +445,7 @@
   }
 
   function renderOverlay() {
+    pop.classList.remove('show');
     ovf.classList.add('hide'); ovl.classList.add('hide');
     const list = curList();
     let t, p = '', b;
